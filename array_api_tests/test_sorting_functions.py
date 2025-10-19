@@ -1,5 +1,6 @@
 import cmath
-from typing import Set
+from collections import defaultdict
+from typing import List, Set
 
 import pytest
 from hypothesis import given
@@ -14,18 +15,19 @@ from . import shape_helpers as sh
 from .typing import Scalar, Shape
 
 
-def assert_scalar_in_set(
+def assert_sets(
     func_name: str,
-    idx: Shape,
-    out: Scalar,
-    set_: Set[Scalar],
+    indices: List[Shape],
+    out: Set[Scalar],
+    expected: Set[Scalar],
     kw={},
 ):
-    out_repr = "out" if idx == () else f"out[{idx}]"
+    out_repr = f"out[{indices}]"
     if cmath.isnan(out):
         raise NotImplementedError()
-    msg = f"{out_repr}={out}, but should be in {set_} [{func_name}({ph.fmt_kw(kw)})]"
-    assert out in set_, msg
+    diff = out.difference(expected)
+    msg = f"{out_repr}={out}, but should be in {expected} (diff={diff}) [{func_name}({ph.fmt_kw(kw)})]"
+    assert out == expected, msg
 
 
 # TODO: Test with signed zeros and NaNs (and ignore them somehow)
@@ -33,7 +35,7 @@ def assert_scalar_in_set(
 @given(
     x=hh.arrays(
         dtype=hh.real_dtypes,
-        shape=hh.shapes(min_dims=1, min_side=1),
+        shape=hh.shapes(min_dims=1, min_side=1, max_side=50),
         elements={"allow_nan": False},
     ),
     data=st.data(),
@@ -59,34 +61,34 @@ def test_argsort(x, data):
     axes = sh.normalize_axis(axis, x.ndim)
     scalar_type = dh.get_scalar_type(x.dtype)
     for indices in sh.axes_ndindex(x.shape, axes):
-        elements = [scalar_type(x[idx]) for idx in indices]
-        orders = list(range(len(elements)))
-        sorders = sorted(
-            orders, key=elements.__getitem__, reverse=kw.get("descending", False)
+        elements_to_sort = [scalar_type(x[idx]) for idx in indices]
+        sorted_indices = [int(out[idx]) for idx in indices]
+        expected_indices = list(range(len(elements_to_sort)))
+        expected_indices.sort(
+            key=elements_to_sort.__getitem__, reverse=kw.get("descending", False)
         )
         if kw.get("stable", True):
-            for idx, o in zip(indices, sorders):
-                ph.assert_scalar_equals("argsort", type_=int, idx=idx, out=int(out[idx]), expected=o, kw=kw)
-        else:
-            idx_elements = dict(zip(indices, elements))
-            idx_orders = dict(zip(indices, orders))
-            element_orders = {}
-            for e in set(elements):
-                element_orders[e] = [
-                    idx_orders[idx] for idx in indices if idx_elements[idx] == e
-                ]
-            selements = [elements[o] for o in sorders]
-            for idx, e in zip(indices, selements):
-                expected_orders = element_orders[e]
-                out_o = int(out[idx])
-                if len(expected_orders) == 1:
-                    ph.assert_scalar_equals(
-                        "argsort", type_=int, idx=idx, out=out_o, expected=expected_orders[0], kw=kw
-                    )
-                else:
-                    assert_scalar_in_set(
-                        "argsort", idx=idx, out=out_o, set_=set(expected_orders), kw=kw
-                    )
+            for x_idx, actual, expected in zip(indices, sorted_indices, expected_indices):
+                ph.assert_scalar_equals(
+                    "argsort", type_=int, idx=x_idx, kw=kw,
+                    out=actual, expected=expected
+                )
+            continue
+
+        expected_sets = defaultdict(set)
+        for i in expected_indices:
+            e = elements_to_sort[i]
+            expected_sets[e].add(i)
+
+        actual_sets = defaultdict(set)
+        indices_in_out = defaultdict(list)
+        for i, idx in zip(sorted_indices, indices):
+            e = elements_to_sort[i]
+            actual_sets[e].add(i)
+            indices_in_out[e].append(idx)
+
+        for e in set(elements_to_sort):
+            assert expected_sets[e] == actual_sets[e]
 
 
 @pytest.mark.unvectorized
