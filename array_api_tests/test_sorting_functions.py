@@ -1,4 +1,3 @@
-import cmath
 from collections import defaultdict
 from typing import List, Set
 
@@ -12,22 +11,6 @@ from . import dtype_helpers as dh
 from . import hypothesis_helpers as hh
 from . import pytest_helpers as ph
 from . import shape_helpers as sh
-from .typing import Scalar, Shape
-
-
-def assert_sets(
-    func_name: str,
-    indices: List[Shape],
-    out: Set[Scalar],
-    expected: Set[Scalar],
-    kw={},
-):
-    out_repr = f"out[{indices}]"
-    if cmath.isnan(out):
-        raise NotImplementedError()
-    diff = out.difference(expected)
-    msg = f"{out_repr}={out}, but should be in {expected} (diff={diff}) [{func_name}({ph.fmt_kw(kw)})]"
-    assert out == expected, msg
 
 
 # TODO: Test with signed zeros and NaNs (and ignore them somehow)
@@ -42,7 +25,8 @@ def assert_sets(
 )
 def test_argsort(x, data):
     if dh.is_float_dtype(x.dtype):
-        assume(not xp.any(x == -0.0) and not xp.any(x == +0.0))
+        # skip inputs with 0-
+        assume(not xp.any((x == -0.0) & xp.signbit(x)))
 
     kw = data.draw(
         hh.kwargs(
@@ -75,20 +59,25 @@ def test_argsort(x, data):
                 )
             continue
 
-        expected_sets = defaultdict(set)
-        for i in expected_indices:
+        expected_ranks = defaultdict(set)
+        for rank, i in enumerate(expected_indices):
             e = elements_to_sort[i]
-            expected_sets[e].add(i)
+            expected_ranks[e].add(rank)
 
-        actual_sets = defaultdict(set)
+        actual_ranks = defaultdict(set)
         indices_in_out = defaultdict(list)
-        for i, idx in zip(sorted_indices, indices):
+        for (rank, i), idx in zip(enumerate(sorted_indices), indices):
             e = elements_to_sort[i]
-            actual_sets[e].add(i)
+            actual_ranks[e].add(rank)
             indices_in_out[e].append(idx)
 
         for e in set(elements_to_sort):
-            assert expected_sets[e] == actual_sets[e]
+            msg = (
+                f"Element {e} (present at x[{indices_in_out[e]}) was sorted at rank(s):"
+                f" {sorted(actual_ranks[e])} but should be at rank(s):"
+                f" {sorted(expected_ranks[e])} [argsort({ph.fmt_kw(kw)})]"
+            )
+            assert actual_ranks[e] == expected_ranks[e], msg
 
 
 @pytest.mark.unvectorized
@@ -96,14 +85,15 @@ def test_argsort(x, data):
 @given(
     x=hh.arrays(
         dtype=hh.real_dtypes,
-        shape=hh.shapes(min_dims=1, min_side=1),
+        shape=hh.shapes(min_dims=1, min_side=1, max_side=50),
         elements={"allow_nan": False},
     ),
     data=st.data(),
 )
 def test_sort(x, data):
     if dh.is_float_dtype(x.dtype):
-        assume(not xp.any(x == -0.0) and not xp.any(x == +0.0))
+        # skip inputs with 0-
+        assume(not xp.any((x == -0.0) & xp.signbit(x)))
 
     kw = data.draw(
         hh.kwargs(
